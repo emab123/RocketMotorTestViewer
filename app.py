@@ -112,15 +112,20 @@ def render_Fields():
                 Fields.pop(i)
                 st.rerun()
 
+    if st.button("Add Field"):
+            add_field(Fields, df.columns.tolist())
+            st.rerun()
+
 def render_Filters():
     st.divider()
     st.write("Filters:")
     filter_methods = [func for func in dir(Filter_type) if callable(getattr(Filter_type, func)) and not func.startswith("__")]
+    targets = st.session_state.processed_data.columns.tolist()
     for i, filter in enumerate(Filters):
             col1, col2, col3, col4= st.columns(4)
             with col1:
                 Filters[i]["targets"] = st.multiselect(
-                    f"Filter Targets", options=df.columns.tolist(), default=filter["targets"],
+                    f"Filter Targets", options=targets, default=filter["targets"],
                     key=f"filter_targets_{i}"
                     )
             with col2:
@@ -139,23 +144,15 @@ def render_Filters():
                     Filters.pop(i)
                     st.rerun()
 
-def render_buttons():
-    st.divider()
-    col1, col2, col3= st.columns(3)
-    with col1:
-        if st.button("Add Field"):
-            add_field(Fields, df.columns.tolist())
-            st.rerun()
-    with col2:
-        if st.button("Add Filter"):
+    if st.button("Add Filter"):
             add_filter(Filters)
             st.rerun()
-    plot_clicked = col3.button("Plot Data")
-    if plot_clicked:
-        process_data()
-        st.rerun()
 
 def process_data():
+    if st.session_state.df_config['Base_Axis']['Time']['column'] is None or \
+       st.session_state.df_config['Base_Axis']['Thrust']['column'] is None:
+        st.warning("Please select columns for Time and Thrust in Base Axis.")
+        return
     columns =   [v["column"] for v in st.session_state.df_config['Base_Axis'].values() if v["column"] is not None]
     columns +=  [field["column"] for field in st.session_state.df_config['Fields'] if field.get("column") is not None]
 
@@ -194,15 +191,12 @@ def process_data():
     for filter in st.session_state.df_config['Filters']:
         for tgt in filter["targets"]:
             field = next((f for f in st.session_state.df_config['Fields'] if f["column"] == tgt), None)
-            tgt_new_name = f"{field['name']} ({type_units.get(field['type'], [''])[0]})"
-            dfc = filter["type"](dfc, tgt_new_name, filter["arg"])
+            dfc = filter["type"](dfc, tgt, filter["arg"])
 
     st.session_state.processed_data = dfc
 
 
 def render_processed_data():
-    st.divider()
-    st.write("Processed Data:")
     dfc = st.session_state.processed_data
     y_columns = dfc.columns.tolist()
     fig = go.Figure()
@@ -265,9 +259,10 @@ df = st.session_state.raw_data
 load_csv()
 render_Base_Axis()
 Fields = st.session_state.df_config['Fields']
-render_Fields()
 Filters = st.session_state.df_config['Filters']
-render_Filters()
-render_buttons()
+if st.session_state.df_config and not st.session_state.raw_data.empty:
+    process_data()
 if not st.session_state.processed_data.empty:
     render_processed_data()
+render_Fields()
+render_Filters()
