@@ -14,7 +14,8 @@ type_units = {
             "Time": ["s", "ms", "us"],
             "Pressure": ["Pa","MPa","kPa", "bar", "psi"],
             "Temperature": ["C", "F", "K"],
-            "Force": ["N", "kN", "kgf", "lbf"]
+            "Force": ["N", "kN", "kgf", "lbf"],
+            "Mass": ["kg", "g", "lb"],
         }
 
 class Filter_type:
@@ -50,15 +51,20 @@ class Filter_type:
 
 def load_csv():
     csv = st.file_uploader("Upload a CSV with test data", type=["csv"])
+    
     if csv is not None: 
         try:
-            st.session_state.raw_data = pd.read_csv(csv)
-            st.write("Input Data:")
-            st.dataframe(df)
+            if st.session_state.raw_data.empty: 
+                st.session_state.raw_data = pd.read_csv(csv)
+                st.rerun()
+            else:
+                st.write("Input Data:")
+                st.dataframe(st.session_state.raw_data)
             
         except Exception as e:
             st.error(f"Error reading CSV file: {e}")
-    
+    else:
+        st.stop()
 
 def add_field(fields:list, columns):
     fields.append({"name": "", "column": columns[2], "type": "", "unit": "", "smoothing": ""})
@@ -67,11 +73,12 @@ def add_filter(filters:list):
 
 def render_Base_Axis():
     BA = st.session_state.df_config['Base_Axis']
-    for axis in BA.keys():
+    columns=df.columns.tolist()
+    for i, axis in enumerate(BA.keys()):
         col1, col2 = st.columns([3,2])
         with col1:
             BA[axis]['column'] = st.selectbox(
-                f"{axis} column", options=df.columns.tolist(), key=f"{axis}_column"
+                f"{axis} column", options=columns,index=i, key=f"{axis}_column"
             )
         with col2:
             BA[axis]['unit'] = st.selectbox(f"{axis} Unit", 
@@ -126,17 +133,16 @@ def render_Filters():
             with col1:
                 Filters[i]["targets"] = st.multiselect(
                     f"Filter Targets", options=targets, default=filter["targets"],
-                    key=f"filter_targets_{i}"
+                    key=f"filter_targets_{i}", on_change=lambda: st.rerun()
                     )
             with col2:
-                selected_method = st.selectbox(
-                    f"Filter Type", options=filter_methods, key=f"filter_type_{i}"
-                    )
+                selected_method = st.selectbox(f"Filter Type", options=filter_methods, key=f"filter_type_{i}",index=1)
                 Filters[i]["type"] = getattr(Filter_type, selected_method)
             with col3:
                 Filters[i]["arg"] = st.number_input(
                     f"{Filters[i]["type"].__code__.co_varnames[2].capitalize()}",
-                    min_value = 0.001, key=f"filter_arg_{i}"
+                    value=Filters[i]['arg'], min_value = 0.001, key=f"filter_arg_{i}",
+                    on_change=lambda: st.rerun()
                     )
             with col4:
                 st.markdown("<div style='height:1.75em;'>Delete</div>", unsafe_allow_html=True)
@@ -166,7 +172,7 @@ def process_data():
             case "MPa": dfc[col] = dfc[col] * 1e6
             case "kPa": dfc[col] = dfc[col] * 1e3
             case "bar": dfc[col] = dfc[col] * 1e5
-            case "psi": dfc[col] = dfc[col] * 6_894.76
+            case "psi": dfc[col] = dfc[col] * 6894.76
             case "F": dfc[col] = (dfc[col] - 32) * 5.0/9.0
             case "K": dfc[col] = dfc[col] - 273.15
             case "kN": dfc[col] = dfc[col] * 1e3
@@ -231,7 +237,30 @@ def render_processed_data():
     fig.update_layout(layout)
     st.plotly_chart(fig, use_container_width=True)
     st.dataframe(dfc)
-            
+
+def render_calculate_ISP():
+    st.divider()
+    col1, col2 = st.columns(2)
+    propellant_mass = col1.number_input("Propellant Mass", min_value=0.01, step=0.1, value=None, placeholder="Propellant Mass", key="propellant_mass")
+    propellant_unit = col2.selectbox("Unit", options=type_units["Mass"], index=None, key="propellant_mass_unit", placeholder="Select unit")
+    if propellant_mass and propellant_unit:
+        match propellant_unit:
+            case "g": propellant_mass *= 1e3
+            case "lb": propellant_mass *= 0.453592
+        total_impulse = np.trapezoid(st.session_state.processed_data['Thrust (N)'],  
+                                    st.session_state.processed_data.index)
+        isp = total_impulse / (propellant_mass * 9.80665)
+        st.markdown(
+            f"""
+            <div style='display:flex;align-items:center;'>
+                <span style='font-weight:bold;font-size:1.5em;min-width:7em;'>Total Impulse:</span>
+                <input type='text' value='{total_impulse:.2f} Ns' disabled style='background-color:#262730;color:#fff;font-weight:bold;text-align:center;width:100%;border:none;border-radius:8px;height:2.125em;font-size:2em;'>
+                <span style='font-weight:bold;font-size:1.5em;margin-left:2em;min-width:3em;'>ISP:</span>
+                <input type='text' value='{isp:.2f} s' disabled style='background-color:#262730;color:#fff;font-weight:bold;text-align:center;width:100%;border:none;border-radius:8px;height:2.125em;font-size:2em;'>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 if "df_config" not in st.session_state:
     st.session_state.df_config = {
@@ -264,5 +293,6 @@ if st.session_state.df_config and not st.session_state.raw_data.empty:
     process_data()
 if not st.session_state.processed_data.empty:
     render_processed_data()
+render_calculate_ISP()
 render_Fields()
 render_Filters()
