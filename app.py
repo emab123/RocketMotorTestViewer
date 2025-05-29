@@ -226,16 +226,26 @@ def render_processed_data():
         xaxis=dict(title="Time (s)"),
         yaxis=dict(title=y_columns[0]),
     )
+    config = {
+      'toImageButtonOptions': {
+        'format': 'png', # one of png, svg, jpeg, webp
+        'filename': 'Thrustcurve',
+        'height': 720,
+        'width': 1280,
+        'scale': 2 # Multiply title/legend/axis/canvas sizes by this factor
+      }
+    }
+
     for i, col in enumerate(y_columns[1:], start=2):
         layout[f"yaxis{i}"] = dict(
             title=col,
             anchor="free",
             overlaying="y",
             side="right",
-            position=1.0 - 0.05 * (i-2   )
+            position=1.0 - 0.05 * (i-2)
         )
     fig.update_layout(layout)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config=config)
     st.dataframe(dfc)
 
 def render_calculate_ISP():
