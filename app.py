@@ -14,8 +14,7 @@ type_units = {
             "Time": ["s", "ms", "us"],
             "Pressure": ["Pa","MPa","kPa", "bar", "psi"],
             "Temperature": ["C", "F", "K"],
-            "Force": ["N", "kN", "kgf", "lbf"],
-            "Mass": ["kg", "g", "lb"],
+            "Force": ["N", "kN", "kgf", "lbf"]
         }
 
 class Filter_type:
@@ -51,20 +50,10 @@ class Filter_type:
 
 def load_csv():
     csv = st.file_uploader("Upload a CSV with test data", type=["csv"])
+    if csv is not None and df.empty: 
+        try: st.session_state.raw_data = pd.read_csv(csv); st.rerun()
+        except Exception as e: st.error(f"Error reading CSV file: {e}")
     
-    if csv is not None: 
-        try:
-            if st.session_state.raw_data.empty: 
-                st.session_state.raw_data = pd.read_csv(csv)
-                st.rerun()
-            else:
-                st.write("Input Data:")
-                st.dataframe(st.session_state.raw_data)
-            
-        except Exception as e:
-            st.error(f"Error reading CSV file: {e}")
-    else:
-        st.stop()
 
 def add_field(fields:list, columns):
     fields.append({"name": "", "column": columns[2], "type": "", "unit": "", "smoothing": ""})
@@ -72,13 +61,11 @@ def add_filter(filters:list):
     filters.append({"targets": [], "type": Filter_type.Smoothing, "arg": 0.1})
 
 def render_Base_Axis():
-    BA = st.session_state.df_config['Base_Axis']
-    columns=df.columns.tolist()
     for i, axis in enumerate(BA.keys()):
         col1, col2 = st.columns([3,2])
         with col1:
             BA[axis]['column'] = st.selectbox(
-                f"{axis} column", options=columns,index=i, key=f"{axis}_column"
+                f"{axis} column", options=df.columns.tolist(), index=i, key=f"{axis}_column"
             )
         with col2:
             BA[axis]['unit'] = st.selectbox(f"{axis} Unit", 
@@ -133,16 +120,17 @@ def render_Filters():
             with col1:
                 Filters[i]["targets"] = st.multiselect(
                     f"Filter Targets", options=targets, default=filter["targets"],
-                    key=f"filter_targets_{i}", on_change=lambda: st.rerun()
+                    key=f"filter_targets_{i}"
                     )
             with col2:
-                selected_method = st.selectbox(f"Filter Type", options=filter_methods, key=f"filter_type_{i}",index=1)
+                selected_method = st.selectbox(
+                    f"Filter Type", options=filter_methods, key=f"filter_type_{i}"
+                    )
                 Filters[i]["type"] = getattr(Filter_type, selected_method)
             with col3:
                 Filters[i]["arg"] = st.number_input(
                     f"{Filters[i]["type"].__code__.co_varnames[2].capitalize()}",
-                    value=Filters[i]['arg'], min_value = 0.001, key=f"filter_arg_{i}",
-                    on_change=lambda: st.rerun()
+                    min_value = 0.001, key=f"filter_arg_{i}"
                     )
             with col4:
                 st.markdown("<div style='height:1.75em;'>Delete</div>", unsafe_allow_html=True)
@@ -155,24 +143,24 @@ def render_Filters():
             st.rerun()
 
 def process_data():
-    if st.session_state.df_config['Base_Axis']['Time']['column'] is None or \
-       st.session_state.df_config['Base_Axis']['Thrust']['column'] is None:
+    if BA['Time']['column'] is None or \
+       BA['Thrust']['column'] is None:
         st.warning("Please select columns for Time and Thrust in Base Axis.")
         return
-    columns =   [v["column"] for v in st.session_state.df_config['Base_Axis'].values() if v["column"] is not None]
+    columns =   [v["column"] for v in BA.values() if v["column"] is not None]
     columns +=  [field["column"] for field in st.session_state.df_config['Fields'] if field.get("column") is not None]
 
     dfc = df[columns].copy()
     
     # Convert units to SI for additional Fields
-    for field in st.session_state.df_config['Fields'] + list(st.session_state.df_config['Base_Axis'].values()):
+    for field in st.session_state.df_config['Fields'] + list(BA.values()):
         col = field.get("column")
         unit = field.get("unit")
         match unit:
             case "MPa": dfc[col] = dfc[col] * 1e6
             case "kPa": dfc[col] = dfc[col] * 1e3
             case "bar": dfc[col] = dfc[col] * 1e5
-            case "psi": dfc[col] = dfc[col] * 6894.76
+            case "psi": dfc[col] = dfc[col] * 6_894.76
             case "F": dfc[col] = (dfc[col] - 32) * 5.0/9.0
             case "K": dfc[col] = dfc[col] - 273.15
             case "kN": dfc[col] = dfc[col] * 1e3
@@ -202,11 +190,20 @@ def process_data():
     st.session_state.processed_data = dfc
 
 
-def render_processed_data():
+def plot_graph():
     dfc = st.session_state.processed_data
     y_columns = dfc.columns.tolist()
     fig = go.Figure()
     # First y-axis (left)
+    download_config = {
+      'toImageButtonOptions': {
+        'format': 'svg', # one of png, svg, jpeg, webp
+        'filename': 'Thrustcurve',
+        'height': 720,
+        'width': 1280,
+        'scale': 2
+      }
+    }
     fig.add_trace(go.Scatter(
         x=dfc.index,
         y=dfc[y_columns[0]],
@@ -226,51 +223,31 @@ def render_processed_data():
         xaxis=dict(title="Time (s)"),
         yaxis=dict(title=y_columns[0]),
     )
-    config = {
-      'toImageButtonOptions': {
-        'format': 'png', # one of png, svg, jpeg, webp
-        'filename': 'Thrustcurve',
-        'height': 720,
-        'width': 1280,
-        'scale': 2 # Multiply title/legend/axis/canvas sizes by this factor
-      }
-    }
-
     for i, col in enumerate(y_columns[1:], start=2):
         layout[f"yaxis{i}"] = dict(
             title=col,
             anchor="free",
             overlaying="y",
             side="right",
-            position=1.0 - 0.05 * (i-2)
+            position=1.0 - 0.05 * (i-2   )
         )
     fig.update_layout(layout)
-    st.plotly_chart(fig, use_container_width=True, config=config)
-    st.dataframe(dfc)
+    st.plotly_chart(fig, use_container_width=True)        
 
-def render_calculate_ISP():
-    st.divider()
-    col1, col2 = st.columns(2)
-    propellant_mass = col1.number_input("Propellant Mass", min_value=0.01, step=0.1, value=None, placeholder="Propellant Mass", key="propellant_mass")
-    propellant_unit = col2.selectbox("Unit", options=type_units["Mass"], index=None, key="propellant_mass_unit", placeholder="Select unit")
-    if propellant_mass and propellant_unit:
-        match propellant_unit:
-            case "g": propellant_mass *= 1e3
-            case "lb": propellant_mass *= 0.453592
-        total_impulse = np.trapezoid(st.session_state.processed_data['Thrust (N)'],  
-                                    st.session_state.processed_data.index)
-        isp = total_impulse / (propellant_mass * 9.80665)
-        st.markdown(
-            f"""
-            <div style='display:flex;align-items:center;'>
-                <span style='font-weight:bold;font-size:1.5em;min-width:7em;'>Total Impulse:</span>
-                <input type='text' value='{total_impulse:.2f} Ns' disabled style='background-color:#262730;color:#fff;font-weight:bold;text-align:center;width:100%;border:none;border-radius:8px;height:2.125em;font-size:2em;'>
-                <span style='font-weight:bold;font-size:1.5em;margin-left:2em;min-width:3em;'>ISP:</span>
-                <input type='text' value='{isp:.2f} s' disabled style='background-color:#262730;color:#fff;font-weight:bold;text-align:center;width:100%;border:none;border-radius:8px;height:2.125em;font-size:2em;'>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+def calculate_ISP():
+    dfc = st.session_state.processed_data
+    total_impulse = np.trapezoid(dfc['Thrust (N)'], x=dfc.index)
+    isp = total_impulse / 9.80665
+    st.markdown(
+        f"<table>" \
+            "<tr>" \
+            "<td><h3>Total Impulse:</td>"\
+            "<td><h3> {total_impulse:.2f} Ns</h3></td>" 
+            "<td><h3>ISP:</h3></td>" \
+            "<td><h3>{isp:.2f} s</h3></td>" \
+            "</tr>" \
+        "</table>", 
+        unsafe_allow_html=True)
 
 if "df_config" not in st.session_state:
     st.session_state.df_config = {
@@ -282,7 +259,6 @@ if "df_config" not in st.session_state:
             "Thrust": {
                 "column": None,
                 "unit": None,
-                "smoothng": None
             }
         },
         "Fields": [],
@@ -294,15 +270,27 @@ if "processed_data" not in st.session_state:
 if "raw_data" not in st.session_state:
             st.session_state.raw_data = pd.DataFrame()
 
-df = st.session_state.raw_data 
-load_csv()
-render_Base_Axis()
+df = st.session_state.raw_data
+BA = st.session_state.df_config['Base_Axis']
 Fields = st.session_state.df_config['Fields']
 Filters = st.session_state.df_config['Filters']
-if st.session_state.df_config and not st.session_state.raw_data.empty:
-    process_data()
-if not st.session_state.processed_data.empty:
-    render_processed_data()
-render_calculate_ISP()
-render_Fields()
-render_Filters()
+
+load_csv()
+if not st.session_state.raw_data.empty:
+    if all( BA[key]['column'] is not None and BA[key]['unit'] is not None for key in ['Time', 'Thrust']) and not df.empty:
+        process_data()
+        plot_graph()
+    render_Base_Axis()
+    col1,col2,col3,col4 = st.columns([2,2,2,1])
+    for name, col, in zip(['Show Input Data', 'Show Processed Data','Calculate Total Impulse and ISP'], [col1, col2, col3]):
+        col.toggle(name, key=f"toggle_{name.replace(' ', '_')}")
+    if st.session_state.toggle_Calculate_Total_Impulse_and_ISP:
+        calculate_ISP()
+    if st.session_state.toggle_Show_Input_Data:
+        st.subheader("Input Data:")
+        st.dataframe(df)
+    if st.session_state.toggle_Show_Processed_Data:
+        st.subheader("Processed Data:")
+        st.dataframe(st.session_state.processed_data)
+    render_Fields()
+    render_Filters()
